@@ -1,0 +1,10 @@
+name = "snake-fight"
+version = "0.1.0"
+defaultTargets = ["snake-fight"]
+
+[[lean_lib]]
+name = "SnakeFight"
+
+[[lean_exe]]
+name = "snake-fight"
+root = "Main"

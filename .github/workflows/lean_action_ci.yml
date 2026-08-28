@@ -1,0 +1,22 @@
+name: Lean Action CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+      - uses: leanprover/lean-action@v1
+      # The interpreter's expected outputs come from CPython; check they still
+      # agree with the CPython on this runner before running the suite.
+      - name: Check test expectations against CPython
+        run: |
+          python3 tests/gen_tests.py
+          git diff --exit-code SnakeFight/Tests.lean
+      - name: Run the interpreter test suite
+        run: ./.lake/build/bin/snake-fight test

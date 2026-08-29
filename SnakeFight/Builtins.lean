@@ -67,7 +67,16 @@ def iterM (v : Value) : M (List Value) := fun s =>
 The kernel deliberately declines to compare heap objects, so the interpreter
 supplies fuelled versions that follow references. -/
 
-mutual
+/-! Both are structural in `fuel`, with the elementwise step factored out into a
+first-order helper that takes the comparison as an argument.  Writing them as
+mutual blocks instead would make Lean compile them by well-founded recursion,
+which the kernel cannot evaluate at any useful speed. -/
+
+/-- Elementwise conjunction of a comparison over two lists. -/
+def listEqWith (f : Value → Value → Bool) : List Value → List Value → Bool
+  | [], [] => true
+  | x :: xs, y :: ys => f x y && listEqWith f xs ys
+  | _, _ => false
 
 /-- Python `==`, following references. -/
 def eqDeep (fuel : Nat) (h : Array Obj) (a b : Value) : Bool :=
@@ -79,28 +88,30 @@ def eqDeep (fuel : Nat) (h : Array Obj) (a b : Value) : Bool :=
       | .ref x, .ref y =>
         if x == y then true
         else match h[x]?, h[y]? with
-          | some (.list xs), some (.list ys) => eqDeepList fuel h xs ys
+          | some (.list xs), some (.list ys) =>
+            listEqWith (fun p q => eqDeep fuel h p q) xs ys
           | some (.dict xs), some (.dict ys) =>
             xs.length == ys.length &&
               xs.all fun kv => match dictLook ys kv.1 with
                 | some v => eqDeep fuel h kv.2 v
                 | Option.none => false
           | _, _ => false
-      | .tuple xs, .tuple ys => eqDeepList fuel h xs ys
-      | .exc n xs, .exc m ys => n == m && eqDeepList fuel h xs ys
+      | .tuple xs, .tuple ys => listEqWith (fun p q => eqDeep fuel h p q) xs ys
+      | .exc n xs, .exc m ys => n == m && listEqWith (fun p q => eqDeep fuel h p q) xs ys
       | .builtin x, .builtin y => x == y
       | .excClass x, .excClass y => x == y
       | _, _ => false
 
-/-- Elementwise `eqDeep`. -/
-def eqDeepList (fuel : Nat) (h : Array Obj) : List Value → List Value → Bool
-  | [], [] => true
-  | x :: xs, y :: ys => eqDeep fuel h x y && eqDeepList fuel h xs ys
-  | _, _ => false
-
-end
-
-mutual
+/-- Lexicographic lifting of a comparison to two lists. -/
+def listCmpWith (f : Value → Value → Option Ordering) :
+    List Value → List Value → Option Ordering
+  | [], [] => some .eq
+  | [], _ :: _ => some .lt
+  | _ :: _, [] => some .gt
+  | x :: xs, y :: ys => match f x y with
+    | some .eq => listCmpWith f xs ys
+    | some o => some o
+    | Option.none => Option.none
 
 /-- Python ordering, following references.  `none` means `TypeError`. -/
 def cmpDeep (fuel : Nat) (h : Array Obj) (a b : Value) : Option Ordering :=
@@ -112,22 +123,11 @@ def cmpDeep (fuel : Nat) (h : Array Obj) (a b : Value) : Option Ordering :=
     | Option.none =>
       match a, b with
       | .ref x, .ref y => match h[x]?, h[y]? with
-        | some (.list xs), some (.list ys) => cmpDeepList fuel h xs ys
+        | some (.list xs), some (.list ys) =>
+          listCmpWith (fun p q => cmpDeep fuel h p q) xs ys
         | _, _ => Option.none
-      | .tuple xs, .tuple ys => cmpDeepList fuel h xs ys
+      | .tuple xs, .tuple ys => listCmpWith (fun p q => cmpDeep fuel h p q) xs ys
       | _, _ => Option.none
-
-/-- Lexicographic `cmpDeep`. -/
-def cmpDeepList (fuel : Nat) (h : Array Obj) : List Value → List Value → Option Ordering
-  | [], [] => some .eq
-  | [], _ :: _ => some .lt
-  | _ :: _, [] => some .gt
-  | x :: xs, y :: ys => match cmpDeep fuel h x y with
-    | some .eq => cmpDeepList fuel h xs ys
-    | some o => some o
-    | Option.none => Option.none
-
-end
 
 /-- Insertion sort using Python's ordering.  `none` on incomparable elements. -/
 def sortValues (h : Array Obj) (xs : List Value) : Option (List Value) :=

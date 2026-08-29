@@ -362,9 +362,13 @@ def escapeStr (s : String) : String :=
     else String.singleton c
   String.singleton q ++ String.join (cs.map esc) ++ String.singleton q
 
-mutual
+/-- Python's `repr`.
 
-/-- Python's `repr`. -/
+Recursion is structural in `fuel`, and the recursive calls under a list go
+through `List.map` rather than through a mutually recursive companion.  A
+mutual block here would be compiled by well-founded recursion, which the kernel
+cannot evaluate at any useful speed, and `repr` is on the path of every
+`print` -- see the note on kernel evaluation in `SnakeFight/Examples.lean`. -/
 def pyRepr (fuel : Nat) (h : Array Obj) (v : Value) : String :=
   match fuel with
   | 0 => "..."
@@ -378,7 +382,7 @@ def pyRepr (fuel : Nat) (h : Array Obj) (v : Value) : String :=
       match vs with
       | [] => "()"
       | [x] => "(" ++ pyRepr fuel h x ++ ",)"
-      | _ => "(" ++ String.intercalate ", " (pyReprList fuel h vs) ++ ")"
+      | _ => "(" ++ String.intercalate ", " (vs.map fun x => pyRepr fuel h x) ++ ")"
     | .func n .. => "<function " ++ n ++ ">"
     | .builtin n => "<built-in function " ++ n ++ ">"
     | .method _ n => "<bound method " ++ n ++ ">"
@@ -386,24 +390,15 @@ def pyRepr (fuel : Nat) (h : Array Obj) (v : Value) : String :=
     | .exc n args =>
       match args with
       | [] => n ++ "()"
-      | _ => n ++ "(" ++ String.intercalate ", " (pyReprList fuel h args) ++ ")"
+      | _ => n ++ "(" ++ String.intercalate ", " (args.map fun x => pyRepr fuel h x) ++ ")"
     | .ref a =>
       match h[a]? with
-      | some (.list xs) => "[" ++ String.intercalate ", " (pyReprList fuel h xs) ++ "]"
-      | some (.dict kvs) => "{" ++ String.intercalate ", " (pyReprPairs fuel h kvs) ++ "}"
+      | some (.list xs) =>
+        "[" ++ String.intercalate ", " (xs.map fun x => pyRepr fuel h x) ++ "]"
+      | some (.dict kvs) =>
+        "{" ++ String.intercalate ", "
+          (kvs.map fun kv => pyRepr fuel h kv.1 ++ ": " ++ pyRepr fuel h kv.2) ++ "}"
       | Option.none => "<object>"
-
-/-- `pyRepr` over a list. -/
-def pyReprList (fuel : Nat) (h : Array Obj) : List Value → List String
-  | [] => []
-  | v :: vs => pyRepr fuel h v :: pyReprList fuel h vs
-
-/-- `pyRepr` over dict entries. -/
-def pyReprPairs (fuel : Nat) (h : Array Obj) : List (Value × Value) → List String
-  | [] => []
-  | (k, v) :: rest => (pyRepr fuel h k ++ ": " ++ pyRepr fuel h v) :: pyReprPairs fuel h rest
-
-end
 
 /-- Python's `str`: like `repr`, except that strings print themselves and an
 exception prints its message. -/
@@ -417,7 +412,7 @@ def pyStr (fuel : Nat) (h : Array Obj) (v : Value) : String :=
     match args with
     | [] => ""
     | [a] => pyStr fuel h a
-    | _ => "(" ++ String.intercalate ", " (pyReprList fuel h args) ++ ")"
+    | _ => "(" ++ String.intercalate ", " (args.map fun x => pyRepr fuel h x) ++ ")"
   | _ => pyRepr fuel h v
 
 /-- How an uncaught exception is reported. -/

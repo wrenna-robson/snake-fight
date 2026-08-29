@@ -83,14 +83,31 @@ where
       | .newline => go n st.next
       | _ => st
 
-/-- Turn an expression into an assignment target. -/
+mutual
+
+/-- Turn an expression into an assignment target.
+
+The list case is spelled out as a mutually recursive companion rather than as
+`es.mapM exprToTarget`, so that Lean compiles both structurally: a recursive
+call under `mapM` forces well-founded recursion, which the kernel cannot
+evaluate at any useful speed. -/
 def exprToTarget : Expr → Except String Target
   | .name x => .ok (.name x)
   | .tupleE es | .listE es => do
-    let ts ← es.mapM exprToTarget
+    let ts ← exprToTargets es
     .ok (.tuple ts)
   | .subscript o i => .ok (.index o i)
   | _ => .error "cannot assign to this expression"
+
+/-- `exprToTarget` over a list, failing if any element fails. -/
+def exprToTargets : List Expr → Except String (List Target)
+  | [] => .ok []
+  | e :: es => do
+    let t ← exprToTarget e
+    let ts ← exprToTargets es
+    .ok (t :: ts)
+
+end
 
 /-- Binary operator precedence.  Higher binds tighter. -/
 def binPrec : Tok → Option (BinOp × Nat)

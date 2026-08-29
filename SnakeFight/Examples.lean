@@ -8,58 +8,160 @@ Two kinds of statement about Python programs, both machine-checked.
 
 ## 1. Concrete runs
 
-`outputOf src` is an ordinary Lean function, so "this program prints this" is an
-equation between values.  These are discharged by `native_decide`, i.e. by
-compiling and running the interpreter and trusting the result (it adds
-`Lean.ofReduceBool` to the proof's axioms).  The kernel can also do it, but the
-front end is far too slow to reduce inside the kernel, so `native_decide` is the
-practical choice.
+`outputOfProg p` is an ordinary Lean function, so "this program prints this" is
+an equation between values, and the kernel proves it.  Each run below is a
+theorem, checked with no axioms beyond Lean's own three -- in particular
+without `Lean.ofReduceBool`, so the Lean compiler is not part of what you have
+to believe.
+
+The theorems are stated about the AST, with a `#guard` checking that the parser
+turns the displayed Python into that AST.  That split is forced.  The
+interpreter reduces in the kernel in milliseconds, but the parser does not
+reduce there at all: evaluating `parse` on even a one-token program runs for
+minutes and then exhausts memory, at every fuel budget we tried.  So the
+source-to-AST step is checked by running the compiled parser instead.
+
+Writing the AST out by hand is what gives that check something to check
+against.  If the parser ever disagreed, the `#guard` would fail the build --
+which it could not do if the AST were generated from the source by the same
+parser it is meant to check.
 
 ## 2. Symbolic correctness
 
 `mulProg_spec` and `absProg_spec` are proofs *for all inputs*, using the Hoare
-logic of `SnakeFight.Hoare`, and they are checked by the kernel with no extra
-axioms.  They are stated about the AST; the `#guard` line above each one checks,
-at build time, that the parser really does turn the displayed Python source into
-that AST.
+logic of `SnakeFight.Hoare`, rather than statements about one run.  They are
+stated about the AST and paired with a `#guard` for the same reasons as above.
 -/
 
 namespace SnakeFight
 
 /-! ## Concrete runs -/
 
-example : outputOf "print(1 + 2)" = some ["3"] := by native_decide
+/-- The parser agrees that `src` is `prog`.  Every concrete run below pairs its
+theorem with one of these. -/
+def parsesAs (src : String) (prog : Program) : Bool :=
+  match parse src with
+  | .ok p => p == prog
+  | .error _ => false
 
-example : outputOf "print('hello ' + 'world')" = some ["hello world"] := by native_decide
+/-! ### Arithmetic -/
 
-/-- Aliasing behaves like Python's, not like a value semantics. -/
-example :
-    outputOf "a = [1, 2]
+def addSrc : String := "print(1 + 2)\n"
+
+def addProg : Program :=
+  [ .expr (.call (.name "print") [.binop .add (.int 1) (.int 2)] []) ]
+
+#guard parsesAs addSrc addProg
+
+theorem addProg_prints : outputOfProg addProg = some ["3"] := by decide
+
+/-! ### String concatenation -/
+
+def concatSrc : String := "print('hello ' + 'world')\n"
+
+def concatProg : Program :=
+  [ .expr (.call (.name "print") [.binop .add (.str "hello ") (.str "world")] []) ]
+
+#guard parsesAs concatSrc concatProg
+
+theorem concatProg_prints : outputOfProg concatProg = some ["hello world"] := by
+  decide
+
+/-! ### Aliasing
+
+Aliasing behaves like Python's, not like a value semantics: `b` and `a` are the
+same list, so appending through `b` is visible through `a`, and `a is b`. -/
+
+def aliasSrc : String :=
+"a = [1, 2]
 b = a
 b.append(3)
-print(a, a is b)" = some ["[1, 2, 3] True"] := by native_decide
+print(a, a is b)
+"
 
-/-- Recursion, closures and comprehensions all work together. -/
-example :
-    outputOf "def make_adder(n):
+def aliasProg : Program :=
+  [ .assign [.name "a"] (.listE [.int 1, .int 2]),
+    .assign [.name "b"] (.name "a"),
+    .expr (.call (.attr (.name "b") "append") [.int 3] []),
+    .expr (.call (.name "print")
+      [.name "a", .compare (.name "a") [(.is, .name "b")]] []) ]
+
+#guard parsesAs aliasSrc aliasProg
+
+theorem aliasProg_prints : outputOfProg aliasProg = some ["[1, 2, 3] True"] := by
+  decide
+
+/-! ### Closures and comprehensions
+
+Recursion, closures and comprehensions all work together. -/
+
+def adderSrc : String :=
+"def make_adder(n):
     def add(v):
         return v + n
     return add
 add3 = make_adder(3)
-print([add3(i) for i in range(5)])" = some ["[3, 4, 5, 6, 7]"] := by native_decide
+print([add3(i) for i in range(5)])
+"
 
-/-- Exceptions, including the class hierarchy and `finally`. -/
-example :
-    outputOf "try:
+def adderProg : Program :=
+  [ .funcDef "make_adder" [("n", Option.none)]
+      [ .funcDef "add" [("v", Option.none)]
+          [ .ret (some (.binop .add (.name "v") (.name "n"))) ],
+        .ret (some (.name "add")) ],
+    .assign [.name "add3"] (.call (.name "make_adder") [.int 3] []),
+    .expr (.call (.name "print")
+      [ .listComp (.call (.name "add3") [.name "i"] [])
+          (.name "i") (.call (.name "range") [.int 5] []) Option.none ] []) ]
+
+#guard parsesAs adderSrc adderProg
+
+theorem adderProg_prints : outputOfProg adderProg = some ["[3, 4, 5, 6, 7]"] := by
+  decide
+
+/-! ### Exceptions
+
+The class hierarchy and `finally` both behave: a `KeyError` is caught by an
+`except LookupError`, and the `finally` block runs either way. -/
+
+def excSrc : String :=
+"try:
     raise KeyError('k')
 except LookupError as e:
     print('caught', e)
 finally:
-    print('cleanup')" = some ["caught 'k'", "cleanup"] := by native_decide
+    print('cleanup')
+"
 
-/-- Integer division and modulus follow Python, not C. -/
-example : outputOf "print(-7 // 2, -7 % 2, 2 ** 70)"
-    = some ["-4 1 1180591620717411303424"] := by native_decide
+def excProg : Program :=
+  [ .tryS
+      [ .raiseS (some (.call (.name "KeyError") [.str "k"] [])) ]
+      [ (some (.name "LookupError"), some "e",
+          [ .expr (.call (.name "print") [.str "caught", .name "e"] []) ]) ]
+      []
+      [ .expr (.call (.name "print") [.str "cleanup"] []) ] ]
+
+#guard parsesAs excSrc excProg
+
+theorem excProg_prints : outputOfProg excProg = some ["caught 'k'", "cleanup"] := by
+  decide
+
+/-! ### Division, modulus and big integers
+
+Integer division and modulus follow Python, not C, and `int` is unbounded. -/
+
+def divSrc : String := "print(-7 // 2, -7 % 2, 2 ** 70)\n"
+
+def divProg : Program :=
+  [ .expr (.call (.name "print")
+      [ .binop .floordiv (.unop .neg (.int 7)) (.int 2),
+        .binop .mod (.unop .neg (.int 7)) (.int 2),
+        .binop .pow (.int 2) (.int 70) ] []) ]
+
+#guard parsesAs divSrc divProg
+
+theorem divProg_prints :
+    outputOfProg divProg = some ["-4 1 1180591620717411303424"] := by decide
 
 /-! ## A verified loop
 
@@ -99,7 +201,7 @@ def mulProg : Program :=
     .whileS mulGuard mulBody ]
 
 -- Build-time check that the parser agrees that `mulSrc` is `mulProg`.
-#guard (match parse mulSrc with | .ok p => p == mulProg | .error _ => false)
+#guard parsesAs mulSrc mulProg
 
 /-- Module-level state in which `m` and `n` are bound to the given integers. -/
 def Args (m n : Int) (s : State) : Prop :=
@@ -197,16 +299,31 @@ theorem mulProg_spec (m n : Int) : H (MulPre m n) mulProg (MulPost m n) := by
     exact hr
   exact H.cons step1 (H.cons step2 (H.cons (H.conseq (fun _ h => h) loop finish) H.nil))
 
-/-- A concrete run of the same program, for `m = 6`, `n = 7`. -/
-example :
-    outputOf "m = 6
+/-! ### A concrete run of the verified program
+
+The same `mulProg`, wrapped in bindings for `m` and `n` and a `print`, so the
+run and the specification are demonstrably about one program rather than two
+that happen to look alike. -/
+
+def mul67Src : String :=
+"m = 6
 n = 7
 r = 0
 i = 0
 while i < n:
     r = r + m
     i = i + 1
-print(r)" = some ["42"] := by native_decide
+print(r)
+"
+
+def mul67Prog : Program :=
+  [ .assign [.name "m"] (.int 6),
+    .assign [.name "n"] (.int 7) ] ++ mulProg ++
+  [ .expr (.call (.name "print") [.name "r"] []) ]
+
+#guard parsesAs mul67Src mul67Prog
+
+theorem mul67Prog_prints : outputOfProg mul67Prog = some ["42"] := by decide
 
 /-! ## A verified conditional
 
@@ -233,7 +350,7 @@ def absProg : Program :=
       [ .assign [.name "y"] (.name "x") ] ]
 
 -- Build-time check that the parser agrees that `absSrc` is `absProg`.
-#guard (match parse absSrc with | .ok p => p == absProg | .error _ => false)
+#guard parsesAs absSrc absProg
 
 /-- **The conditional computes an absolute value.** -/
 theorem absProg_spec (a : Int) :
@@ -271,5 +388,50 @@ theorem mulProg_correct (m n : Int) (fuel : Nat) (s s' : State)
     (hpre : MulPre m n s) (hrun : execBlock fuel mulProg s = .ok .normal s') :
     s'.lookupName "r" = some (.int (m * n)) :=
   (mulProg_spec m n).correct hpre hrun
+
+/-! ## Axiom audit
+
+Everything proved in this file -- the concrete runs as well as the
+specifications -- rests on nothing but Lean's own three axioms.  In particular
+`Lean.ofReduceBool` does not appear, so no part of any proof here is delegated
+to the compiler.  These are `#guard_msgs`, so the build fails if that ever
+stops being true.
+-/
+
+/-- info: 'SnakeFight.addProg_prints' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms addProg_prints
+
+/-- info: 'SnakeFight.concatProg_prints' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms concatProg_prints
+
+/-- info: 'SnakeFight.aliasProg_prints' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms aliasProg_prints
+
+/-- info: 'SnakeFight.adderProg_prints' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms adderProg_prints
+
+/-- info: 'SnakeFight.excProg_prints' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms excProg_prints
+
+/-- info: 'SnakeFight.divProg_prints' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms divProg_prints
+
+/-- info: 'SnakeFight.mul67Prog_prints' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms mul67Prog_prints
+
+/-- info: 'SnakeFight.H.sound' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms H.sound
+
+/-- info: 'SnakeFight.evalP_agrees' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms evalP_agrees
+
+/-- info: 'SnakeFight.mulProg_spec' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms mulProg_spec
+
+/-- info: 'SnakeFight.mulProg_correct' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms mulProg_correct
+
+/-- info: 'SnakeFight.absProg_spec' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms absProg_spec
 
 end SnakeFight

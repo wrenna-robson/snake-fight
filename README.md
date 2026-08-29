@@ -122,13 +122,41 @@ total function of its fuel budget, so "this program prints this" is an equation
 between Lean values:
 
 ```lean
-example : outputOf "print(-7 // 2, -7 % 2, 2 ** 70)"
-    = some ["-4 1 1180591620717411303424"] := by native_decide
+def divProg : Program :=
+  [ .expr (.call (.name "print")
+      [ .binop .floordiv (.unop .neg (.int 7)) (.int 2),
+        .binop .mod (.unop .neg (.int 7)) (.int 2),
+        .binop .pow (.int 2) (.int 70) ] []) ]
+
+#guard parsesAs divSrc divProg
+
+theorem divProg_prints :
+    outputOfProg divProg = some ["-4 1 1180591620717411303424"] := by decide
 ```
 
-`native_decide` compiles and runs it, which adds `Lean.ofReduceBool` to the
-theorem's axioms. Lean's kernel can evaluate these too, but it is far too slow
-on the front end to be practical, so end-to-end examples use `native_decide`.
+The kernel proves that, with no axioms beyond Lean's own three. `native_decide`
+is not used anywhere in this project, so `Lean.ofReduceBool` — and with it the
+Lean compiler and runtime — is not part of what you have to believe.
+
+The theorem is about the *AST*, with a `#guard` checking that the parser turns
+the displayed Python into that AST. That split is forced. The interpreter
+reduces in the kernel in milliseconds, but the parser does not reduce there at
+all: evaluating `parse` on even a one-token program runs for minutes and then
+exhausts memory, at every fuel budget tried. So the source-to-AST step is
+checked by running the compiled parser instead.
+
+Writing the AST out by hand is what gives that check something to check
+against. A generated AST could not catch a parser bug — the theorem would
+silently become a true statement about whatever program the parser had in mind.
+Nor does the output alone catch it: mis-recording `a is b` as `a == b` leaves
+the printed output unchanged, so the theorem still goes through and only the
+`#guard` fails.
+
+Making the parser kernel-reducible would remove that last evaluated step, and
+would be the natural next thing to attack. Three plausible culprits have been
+ruled out — the fuel budget, the size of the mutual block (the interpreter's is
+19 functions and reduces fine), and the token list (the lexer kernel-reduces in
+0.13s) — so the cause is still open.
 
 ### 2. A specification-level evaluator, tied to the interpreter by a theorem
 
@@ -199,10 +227,13 @@ Both are checked by the kernel with no extra axioms (`propext`,
 `Classical.choice`, `Quot.sound` only). The invariant is `0 ≤ i ≤ n ∧ r = m * i`,
 and the exit condition plus the invariant give `i = n`, hence `r = m * n`.
 
-The theorems are stated about the AST. A `#guard` next to each example checks at
-build time that the parser really does turn the displayed Python source into
-that AST; that link is checked by evaluation, not by the kernel, because the
-AST types do not have derivable `DecidableEq` instances.
+That claim is itself checked: the end of `SnakeFight/Examples.lean` pins the
+axiom list of every theorem in the file, runs and specifications alike, with
+`#guard_msgs in #print axioms`, so the build breaks if anything ever sneaks a
+compiler-trusting step into a proof.
+
+These theorems are stated about the AST for the same reason the concrete runs
+are, and with the same `#guard` linking the displayed source to it.
 
 ## Is it actually Python?
 

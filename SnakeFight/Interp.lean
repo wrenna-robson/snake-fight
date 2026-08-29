@@ -696,4 +696,14 @@ def outputOf (src : String) : Option (List String) :=
   | .ok (.ok out) => some out
   | _ => Option.none
 
+/-- `outputOf` for a program that has already been parsed.
+
+Concrete-run theorems are stated with this rather than with `outputOf`, because
+the interpreter reduces in the kernel and the parser does not.  See the note on
+concrete runs in `SnakeFight.Examples`. -/
+def outputOfProg (p : Program) : Option (List String) :=
+  match runOutcome defaultFuel p with
+  | .ok out => some out
+  | _ => Option.none
+
 end SnakeFight

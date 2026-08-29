@@ -529,6 +529,16 @@ def pParams (fuel : Nat) (st : PState) :
       | some st => do let (ps, st) ← pParams fuel st; .ok ((n, d) :: ps, st)
       | Option.none => .ok ([(n, d)], st)
 
+/-- `a, b, c` -- names only. -/
+def pNameList (fuel : Nat) (st : PState) : Except String (List String × PState) :=
+  match fuel with
+  | 0 => perr st "parser ran out of fuel"
+  | fuel + 1 => do
+    let (n, st) ← expectName st
+    match acceptOp st "," with
+    | some st => do let (ns, st) ← pNameList fuel st; .ok (n :: ns, st)
+    | Option.none => .ok ([n], st)
+
 mutual
 
 /-- One statement. -/
@@ -748,16 +758,6 @@ def pAssignRest (fuel : Nat) (acc : List Expr) (st : PState) :
     let (e, st) ← pExprList fuel st
     if st.tok == Tok.op "=" then pAssignRest fuel (acc ++ [e]) st
     else .ok (acc, e, st)
-
-/-- `a, b, c` -- names only. -/
-def pNameList (fuel : Nat) (st : PState) : Except String (List String × PState) :=
-  match fuel with
-  | 0 => perr st "parser ran out of fuel"
-  | fuel + 1 => do
-    let (n, st) ← expectName st
-    match acceptOp st "," with
-    | some st => do let (ns, st) ← pNameList fuel st; .ok (n :: ns, st)
-    | Option.none => .ok ([n], st)
 
 end
 

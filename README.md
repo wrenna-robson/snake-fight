@@ -50,7 +50,7 @@ builds take seconds.
 | `SnakeFight/Builtins.lean` | 504 | builtin functions and the methods on `str`, `list`, `dict` |
 | `SnakeFight/Interp.lean` | 728 | the interpreter proper |
 | `SnakeFight/Pure.lean` | 541 | a specification-level evaluator, and the theorem that the interpreter agrees with it |
-| `SnakeFight/Hoare.lean` | 1096 | a Hoare logic, including a procedure-call rule, proved sound against the interpreter |
+| `SnakeFight/Hoare.lean` | 1102 | a Hoare logic, including a procedure-call rule, proved sound against the interpreter |
 | `SnakeFight/Reason.lean` | 182 | reasoning helpers for the integer fragment |
 | `SnakeFight/Examples.lean` | 1104 | worked examples: concrete runs and three verified programs |
 | `SnakeFight/Tests.lean` | 168 | the test suite (expectations generated from CPython) |
@@ -110,12 +110,36 @@ step rather than a hard problem. The other deliberate approximation is that
 `range` is materialized as a list rather than being lazy. Both are noted at
 their definitions in the source.
 
-The procedure rule below is the one part of the reasoning layer that this would
-disturb. It works with frames as they are — snapshot values without identity —
-and says what a call may not touch with an assertion, `InFrame`, about the
-globals, the heap and the output. Give frames heap identity and `InFrame` is what
-changes: it would have to talk about frame addresses, and possibly about aliasing
-between them.
+The two halves of that fix cost very differently, and not in the direction you
+would guess.
+
+The **interpreter** side is contained. `Frame` is read in about six places —
+`lookupName`, `setVar`, `defEnv`, `currentEnv`, the frame swap in `callValue`,
+and `global` — and the change is to give `State` a second store, `frames : Array
+Frame`, with each frame holding its parent's address and `Value.func` holding an
+address instead of an association list. Note *second* store: the object heap is
+`Array Obj` and `Obj` is exactly `list | dict`, matched in some sixty places
+across the kernel and the builtins, so putting frames in there would be the
+invasive option, not the cheap one.
+
+The **reasoning** side is where it lands, and it lands harder than on any one
+definition. A call would have to allocate a frame that outlives it —
+`make_adder` above returns a closure over a call that has already finished, so
+the frame cannot be popped — and a call that allocates no longer restores the
+caller's state exactly. That breaks `s' = s`, which is not a clause of `InFrame`
+but of `EvalTo`, the judgement *every* value-consuming rule is stated over. It
+would weaken to "the frame store has grown and the old entries are unchanged",
+and then assignment, `return`, `CallSpec`, all seven `EvalTo`/`EvalsTo`
+composition lemmas and the rule of constancy each need that threaded through,
+with a monotonicity side-condition on the assertions. `H` itself, `Ok`,
+soundness for `if`/`while`/`assert`, `H.append` and the loop specification are
+untouched: none of them mentions the identity of a state.
+
+The mitigating fact is that `nonlocal` is not supported, so a callee can never
+write to an enclosing frame. The store only ever grows and old entries never
+change — monotone extension, which is the mild end of this. It is not aliasing
+and it does not need separation logic. It just has to be threaded everywhere,
+which is the work.
 
 ## Reasoning about Python programs
 

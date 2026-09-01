@@ -823,9 +823,15 @@ assertion across a body that was verified without knowing about it, which is why
 the loop of `mulNonneg` can be reused verbatim inside a function.
 
 Frames here are snapshot values without identity, which is also the source of
-the closure divergence noted in the README.  If frames are given heap identity
-later, `InFrame` is the statement that changes: it would have to talk about
-frame addresses, and possibly about aliasing between them.
+the closure divergence noted in the README.  It is tempting to say `InFrame` is
+what would change if frames were given identity, and that is wrong.  A call
+would then allocate a frame that outlives it -- a returned closure may still
+point at it -- so a call would no longer restore the caller's state *exactly*,
+and `s' = s` is a clause of `EvalTo`, which every value-consuming rule is stated
+over.  That clause would weaken to "the frame store has grown, and its old
+entries are unchanged", and assignment, `return`, `CallSpec` and each of the
+composition lemmas would carry it.  `H`, `Ok`, `H.append` and the soundness of
+`if`/`while`/`assert` would not: none of them mentions a state's identity.
 -/
 
 /-- Two states agree everywhere outside the current frame. -/

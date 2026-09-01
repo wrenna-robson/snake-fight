@@ -19,22 +19,43 @@ namespace SnakeFight
 
 @[simp] theorem truthy_bool (h : Array Obj) (b : Bool) : (Value.bool b).truthy h = b := rfl
 
-/-! ## Arithmetic -/
+/-! ## Arithmetic
+
+Two levels, because the rules ask for two.  `binOpK_*_int` is what the kernel
+answers for a pair of integers; `evalP_*` is the same fact about an expression,
+and is proved from it.
+
+Most rules want the `evalP` form, but `EvalTo.binop` states its obligation at the
+kernel level -- it has to, since an operand described by an `EvalTo` need not be
+an expression `evalP` can see through.  That is the case where an operator has a
+call inside it, and it is why both forms are worth naming. -/
+
+theorem binOpK_add_int (a b : Int) :
+    binOpK .add (.int a) (.int b) = some (.val (.int (a + b))) := by
+  simp [binOpK, asInt, intBinOpK]
+
+theorem binOpK_sub_int (a b : Int) :
+    binOpK .sub (.int a) (.int b) = some (.val (.int (a - b))) := by
+  simp [binOpK, asInt, intBinOpK]
+
+theorem binOpK_mul_int (a b : Int) :
+    binOpK .mul (.int a) (.int b) = some (.val (.int (a * b))) := by
+  simp [binOpK, asInt, intBinOpK]
 
 theorem evalP_add {s : State} {x y : Expr} {a b : Int}
     (hx : evalP s x = some (.int a)) (hy : evalP s y = some (.int b)) :
     evalP s (.binop .add x y) = some (.int (a + b)) := by
-  simp [evalP, hx, hy, binOpK, asInt, intBinOpK]
+  simp [evalP, hx, hy, binOpK_add_int]
 
 theorem evalP_sub {s : State} {x y : Expr} {a b : Int}
     (hx : evalP s x = some (.int a)) (hy : evalP s y = some (.int b)) :
     evalP s (.binop .sub x y) = some (.int (a - b)) := by
-  simp [evalP, hx, hy, binOpK, asInt, intBinOpK]
+  simp [evalP, hx, hy, binOpK_sub_int]
 
 theorem evalP_mul {s : State} {x y : Expr} {a b : Int}
     (hx : evalP s x = some (.int a)) (hy : evalP s y = some (.int b)) :
     evalP s (.binop .mul x y) = some (.int (a * b)) := by
-  simp [evalP, hx, hy, binOpK, asInt, intBinOpK]
+  simp [evalP, hx, hy, binOpK_mul_int]
 
 theorem evalP_neg {s : State} {x : Expr} {a : Int} (hx : evalP s x = some (.int a)) :
     evalP s (.unop .neg x) = some (.int (-a)) := by

@@ -51,7 +51,7 @@ builds take seconds.
 | `SnakeFight/Interp.lean` | 728 | the interpreter proper |
 | `SnakeFight/Pure.lean` | 541 | a specification-level evaluator, and the theorem that the interpreter agrees with it |
 | `SnakeFight/Hoare.lean` | 1096 | a Hoare logic, including a procedure-call rule, proved sound against the interpreter |
-| `SnakeFight/Reason.lean` | 161 | reasoning helpers for the integer fragment |
+| `SnakeFight/Reason.lean` | 182 | reasoning helpers for the integer fragment |
 | `SnakeFight/Examples.lean` | 1104 | worked examples: concrete runs and three verified programs |
 | `SnakeFight/Tests.lean` | 168 | the test suite (expectations generated from CPython) |
 

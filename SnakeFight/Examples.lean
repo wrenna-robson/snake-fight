@@ -759,7 +759,7 @@ theorem mulFn_spec : CallSpec MulDefs mulFn mulC := by
           exact ⟨⟨b, rfl⟩, fun w hw => hw b rfl⟩
     · intro t x y _ hx hy
       subst hx; subst hy
-      exact ⟨.int (a * Int.sign b), by simp [binOpK, asInt, intBinOpK], rfl⟩
+      exact ⟨.int (a * Int.sign b), binOpK_mul_int a (Int.sign b), rfl⟩
   -- `abs(n)`
   · refine EvalsTo.cons (A := fun _ v => v = Value.int (b.natAbs : Int)) ?_
       (B := fun _ vs => vs = []) (EvalsTo.nil (fun _ _ => rfl)) ?_

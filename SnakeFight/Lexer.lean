@@ -88,6 +88,11 @@ private def takeIdent (cs : List Char) : String × List Char :=
   let ⟨pre, rest⟩ := cs.span isIdentCont
   (String.ofList pre, rest)
 
+/-- Value of a list of decimal digits.  Structural on the list, so the kernel
+can evaluate it; `String.toNat!` cannot be reduced by the kernel at all. -/
+private def natOfDigits (cs : List Char) : Nat :=
+  cs.foldl (fun n c => n * 10 + (c.toNat - '0'.toNat)) 0
+
 /-- Scan a decimal integer, allowing `_` separators. -/
 private def takeInt (cs : List Char) : Except String (Int × List Char) :=
   let ⟨pre, rest⟩ := cs.span (fun c => c.isDigit || c == '_')
@@ -96,7 +101,7 @@ private def takeInt (cs : List Char) : Except String (Int × List Char) :=
   | 'e' :: _ | 'E' :: _ => .error "floating point literals are not supported"
   | _ =>
     let digits := pre.filter (fun c => c != '_')
-    .ok (String.ofList digits |>.toNat!, rest)
+    .ok (natOfDigits digits, rest)
 
 /-- Scan a string literal body, given the quote character and whether it is a
 triple-quoted string. -/

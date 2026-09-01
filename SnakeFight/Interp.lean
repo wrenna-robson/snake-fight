@@ -698,12 +698,31 @@ def outputOf (src : String) : Option (List String) :=
 
 /-- `outputOf` for a program that has already been parsed.
 
-Concrete-run theorems are stated with this rather than with `outputOf`, because
-the interpreter reduces in the kernel and the parser does not.  See the note on
-concrete runs in `SnakeFight.Examples`. -/
+Concrete-run theorems are proved against this and then transported to the
+source by `outputOf_of_parse`, because `parse src` cannot be reduced in one
+step.  See the note on concrete runs in `SnakeFight.Examples`. -/
 def outputOfProg (p : Program) : Option (List String) :=
   match runOutcome defaultFuel p with
   | .ok out => some out
   | _ => Option.none
+
+/-! ## From source to program
+
+Reducing `parse src` and the interpreter together is hopeless -- see the note in
+`SnakeFight.ExampleToks` -- so a concrete run is proved about the AST and moved
+across to the source with these.  Neither reduces anything: they only say that
+running source which parses to `p` is running `p`. -/
+
+/-- Running source that parses to `p` is running `p`. -/
+theorem runSource_of_parse {src : String} {p : Program} {fuel : Nat}
+    (h : parse src = .ok p) : runSource fuel src = .ok (runOutcome fuel p) := by
+  unfold runSource; rw [h]; rfl
+
+/-- What source prints is what the AST it parses to prints. -/
+theorem outputOf_of_parse {src : String} {p : Program} (h : parse src = .ok p) :
+    outputOf src = outputOfProg p := by
+  unfold outputOf outputOfProg
+  rw [runSource_of_parse h]
+  cases runOutcome defaultFuel p <;> rfl
 
 end SnakeFight

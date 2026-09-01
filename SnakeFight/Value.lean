@@ -202,13 +202,19 @@ def State.setVar (s : State) (x : String) (v : Value) : State :=
     if fr.globalDecls.contains x then { s with globals := aset s.globals x v }
     else { s with frame := some { fr with locals := aset fr.locals x v } }
 
-@[simp] theorem State.lookupName_setVar_self (s : State) (x : String) (v : Value)
-    (h : s.frame = Option.none) : (s.setVar x v).lookupName x = some v := by
-  simp [State.setVar, State.lookupName, h]
+/-- Assignment is a plain local update: either we are at module level, or in a
+frame with no `global` declaration in force.  Every frame the interpreter builds
+for a call starts out this way, and only a `global` statement changes it.
 
-@[simp] theorem State.setVar_frame (s : State) (x : String) (v : Value)
-    (h : s.frame = Option.none) : (s.setVar x v).frame = Option.none := by
-  simp [State.setVar, h]
+This is the scope hypothesis the reasoning lemmas below take.  It is weaker than
+`s.frame = none`, which is what lets one verified block be reused both at module
+level and inside a function body. -/
+def State.plainScope (s : State) : Prop :=
+  ∀ fr, s.frame = some fr → fr.globalDecls = []
+
+theorem State.plainScope_of_frame_none {s : State} (h : s.frame = Option.none) :
+    s.plainScope := by
+  intro fr hfr; rw [h] at hfr; exact absurd hfr (by simp)
 
 @[simp] theorem State.setVar_heap (s : State) (x : String) (v : Value) :
     (s.setVar x v).heap = s.heap := by
@@ -218,10 +224,90 @@ def State.setVar (s : State) (x : String) (v : Value) : State :=
     (s.setVar x v).out = s.out := by
   cases hf : s.frame <;> simp [State.setVar, hf] <;> split <;> rfl
 
+@[simp] theorem State.setVar_frame_none (s : State) (x : String) (v : Value)
+    (h : s.frame = Option.none) : (s.setVar x v).frame = Option.none := by
+  simp [State.setVar, h]
+
+/-- Assigning to a variable keeps the scope plain. -/
+theorem State.plainScope_setVar {s : State} (h : s.plainScope) (x : String) (v : Value) :
+    (s.setVar x v).plainScope := by
+  cases hf : s.frame with
+  | none => intro fr hfr; simp [State.setVar, hf] at hfr
+  | some g =>
+    have hg : g.globalDecls = [] := h g hf
+    intro fr hfr
+    simp [State.setVar, hf, hg] at hfr
+    subst hfr
+    rfl
+
+/-- Inside a plain scope, an assignment stays inside the current frame: the
+globals are untouched unless there is no frame at all. -/
+theorem State.setVar_globals_of_frame {s : State} {fr : Frame} (hf : s.frame = some fr)
+    (hg : fr.globalDecls = []) (x : String) (v : Value) :
+    (s.setVar x v).globals = s.globals := by
+  simp [State.setVar, hf, hg]
+
+@[simp] theorem State.lookupName_setVar_self (s : State) (x : String) (v : Value)
+    (h : s.plainScope) : (s.setVar x v).lookupName x = some v := by
+  cases hf : s.frame with
+  | none => simp [State.setVar, State.lookupName, hf]
+  | some g => simp [State.setVar, State.lookupName, hf, h g hf]
+
 theorem State.lookupName_setVar_of_ne (s : State) {x y : String} (hxy : x ≠ y)
-    (v : Value) (h : s.frame = Option.none) :
+    (v : Value) (h : s.plainScope) :
     (s.setVar x v).lookupName y = s.lookupName y := by
-  simp [State.setVar, State.lookupName, h, alook_aset_of_ne _ hxy]
+  cases hf : s.frame with
+  | none => simp [State.setVar, State.lookupName, hf, alook_aset_of_ne _ hxy]
+  | some g =>
+    simp [State.setVar, State.lookupName, hf, h g hf, alook_aset_of_ne _ hxy]
+
+/-- The environment a `def` or `lambda` captures in state `s`: the current
+locals, then whatever the enclosing function captured.  See `currentEnv`, which
+is this in the monad. -/
+def State.defEnv (s : State) : List (String × Value) :=
+  match s.frame with
+  | Option.none => []
+  | some fr => fr.locals ++ fr.captured
+
+/-- Name resolution as it looks from inside a frame that does not shadow `nm`:
+the globals, then the builtins.
+
+A call rule needs this because a contract has to survive entering the callee's
+frame.  The fresh frame shadows its own parameters and nothing else, so a
+contract stated about the globals is still true one frame down. -/
+def resolveGlobal (gl : List (String × Value)) (nm : String) : Option Value :=
+  match alook gl nm with
+  | some v => some v
+  | Option.none => builtinValue nm
+
+theorem resolveGlobal_aset_self (gl : List (String × Value)) (k : String) (v : Value) :
+    resolveGlobal (aset gl k v) k = some v := by
+  simp [resolveGlobal]
+
+theorem resolveGlobal_aset_of_ne (gl : List (String × Value)) {k nm : String} (h : k ≠ nm)
+    (v : Value) : resolveGlobal (aset gl k v) nm = resolveGlobal gl nm := by
+  simp [resolveGlobal, alook_aset_of_ne _ h]
+
+/-- At module level every name resolves through the globals. -/
+theorem State.lookupName_eq_resolveGlobal_of_frame_none {s : State}
+    (h : s.frame = Option.none) (nm : String) :
+    s.lookupName nm = resolveGlobal s.globals nm := by
+  simp [State.lookupName, resolveGlobal, h]
+
+/-- And so does a name a frame does not shadow. -/
+theorem State.lookupName_eq_resolveGlobal_of_frame {s : State} {fr : Frame}
+    (h : s.frame = some fr) {nm : String}
+    (hl : alook fr.locals nm = Option.none) (hc : alook fr.captured nm = Option.none) :
+    s.lookupName nm = resolveGlobal s.globals nm := by
+  simp [State.lookupName, resolveGlobal, h, hl, hc]
+
+@[simp] theorem State.defEnv_of_frame_none {s : State} (h : s.frame = Option.none) :
+    s.defEnv = [] := by
+  simp [State.defEnv, h]
+
+theorem State.setVar_globals_of_frame_none {s : State} (h : s.frame = Option.none)
+    (x : String) (v : Value) : (s.setVar x v).globals = aset s.globals x v := by
+  simp [State.setVar, h]
 
 /-- Read a heap object. -/
 def State.get (s : State) (a : Addr) : Option Obj := s.heap[a]?

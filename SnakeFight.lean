@@ -18,5 +18,6 @@ import SnakeFight.Hoare
 import SnakeFight.Reason
 
 -- Machine-checked examples and the CPython-derived test suite.
+import SnakeFight.ExampleToks
 import SnakeFight.Examples
 import SnakeFight.Tests
